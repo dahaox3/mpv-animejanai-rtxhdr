@@ -6,12 +6,12 @@
 
 #include <windows.h>
 #include <d3d11.h>
+#include <ffnvcodec/dynlink_loader.h>
 #include <libavutil/buffer.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_cuda.h>
 #include <libavutil/hwcontext_d3d11va.h>
 #include <libavutil/mem.h>
-#include <ffnvcodec/dynlink_loader.h>
 
 #include "common/common.h"
 #include "filters/filter.h"
