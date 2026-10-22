@@ -6,6 +6,7 @@
 
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d10.h>
 #include <ffnvcodec/dynlink_loader.h>
 #include <libavutil/buffer.h>
 #include <libavutil/hwcontext.h>
@@ -34,6 +35,7 @@ struct session {
     CUmodule module;
     CUfunction kernel;
     CUdeviceptr packed;
+    ID3D10Multithread *d3d_lock;
 };
 
 struct surface {
@@ -48,6 +50,7 @@ struct priv {
     AVBufferRef *session_ref;
     struct mp_image_pool *pool;
     int w, h;
+    ID3D10Multithread *d3d_lock;
 };
 
 static bool check_cu(struct mp_filter *f, CUresult ret, const char *op)
@@ -84,6 +87,8 @@ static void free_session(void *opaque, uint8_t *data)
         s->cu->cuCtxPopCurrent(&dummy);
     }
     av_buffer_unref(&s->device_ref);
+    if (s->d3d_lock)
+        ID3D10Multithread_Release(s->d3d_lock);
     cuda_free_functions(&s->cu);
     av_free(s);
 }
@@ -96,7 +101,9 @@ static void free_surface(void *opaque, uint8_t *data)
     if (surface->resource &&
         s->cu->cuCtxPushCurrent(s->ctx) == CUDA_SUCCESS)
     {
+        ID3D10Multithread_Enter(s->d3d_lock);
         s->cu->cuGraphicsUnregisterResource(surface->resource);
+        ID3D10Multithread_Leave(s->d3d_lock);
         s->cu->cuCtxPopCurrent(&dummy);
     }
     if (surface->texture)
@@ -132,8 +139,10 @@ static struct mp_image *allocate_surface(void *opaque, int fmt, int w, int h)
     CUcontext dummy;
     if (!CU_OK(s->cu->cuCtxPushCurrent(s->ctx)))
         goto fail;
+    ID3D10Multithread_Enter(s->d3d_lock);
     bool registered = CU_OK(s->cu->cuGraphicsD3D11RegisterResource(
         &surface->resource, (ID3D11Resource *)surface->texture, 0));
+    ID3D10Multithread_Leave(s->d3d_lock);
     s->cu->cuCtxPopCurrent(&dummy);
     if (!registered) {
         MP_ERR(f, "The driver cannot share RGB10A2 with CUDA. "
@@ -188,6 +197,8 @@ static bool configure(struct mp_filter *f, struct mp_image *src)
         return false;
     }
     s->ctx = cuda->cuda_ctx;
+    s->d3d_lock = p->d3d_lock;
+    ID3D10Multithread_AddRef(s->d3d_lock);
     s->device_ref = av_buffer_ref(input->device_ref);
     if (!s->device_ref || cuda_load_functions(&s->cu, f->log) < 0)
         return false;
@@ -273,6 +284,9 @@ static struct mp_image *convert(struct mp_filter *f, struct mp_image *src)
               CU_OK(s->cu->cuLaunchKernel(s->kernel,
                     (p->w + 31) / 32, (p->h + 7) / 8, 1, 32, 8, 1,
                     0, s->stream, args, NULL));
+    // VPP and the VO use this device on different CPU threads. Serialize the
+    // whole CUDA ownership interval, not only individual D3D11 API calls.
+    ID3D10Multithread_Enter(s->d3d_lock);
     if (ok)
         mapped = ok = CU_OK(s->cu->cuGraphicsMapResources(
             1, &surface->resource, s->stream));
@@ -295,6 +309,7 @@ static struct mp_image *convert(struct mp_filter *f, struct mp_image *src)
     // Retain src until the bridge finished reading it. Native inference is
     // still pipelined upstream; this waits for the short bridge only.
     ok = CU_OK(s->cu->cuStreamSynchronize(s->stream)) && ok;
+    ID3D10Multithread_Leave(s->d3d_lock);
     s->cu->cuCtxPopCurrent(&dummy);
     if (!ok) {
         talloc_free(out);
@@ -337,6 +352,8 @@ static void destroy(struct mp_filter *f)
     struct priv *p = f->priv;
     clear_session(f);
     av_buffer_unref(&p->d3d_device);
+    if (p->d3d_lock)
+        ID3D10Multithread_Release(p->d3d_lock);
 }
 
 static const struct mp_filter_info info = {
@@ -370,6 +387,12 @@ static struct mp_filter *create(struct mp_filter *parent, void *options)
     p->d3d_device = av_buffer_ref(hw->av_device_ref);
     if (!p->d3d_device)
         goto fail;
+    AVHWDeviceContext *device = (void *)p->d3d_device->data;
+    AVD3D11VADeviceContext *d3d = device->hwctx;
+    if (FAILED(ID3D11Device_QueryInterface(d3d->device,
+               &IID_ID3D10Multithread, (void **)&p->d3d_lock)))
+        goto fail;
+    ID3D10Multithread_SetMultithreadProtected(p->d3d_lock, TRUE);
     return f;
 fail:
     talloc_free(f);
