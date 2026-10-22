@@ -1466,6 +1466,9 @@ features += {'d3d-hwaccel': d3d_hwaccel.allowed()}
 if features['d3d-hwaccel']
     sources += files('video/d3d.c',
                      'video/filter/vf_d3d11vpp.c')
+    if features['cuda-hwaccel']
+        sources += files('video/filter/vf_cuda_d3d11.c')
+    endif
 endif
 
 amf = cc.has_header('AMF/core/Factory.h', required:

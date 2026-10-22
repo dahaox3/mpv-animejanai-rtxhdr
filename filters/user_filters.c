@@ -103,6 +103,9 @@ const struct mp_user_filter_entry *vf_list[] = {
 #endif
 #if HAVE_CUDA_HWACCEL
     &vf_animejanai,
+#if HAVE_D3D_HWACCEL
+    &vf_cuda_d3d11,
+#endif
 #endif
 #if HAVE_AMF
     &vf_amf_frc,
