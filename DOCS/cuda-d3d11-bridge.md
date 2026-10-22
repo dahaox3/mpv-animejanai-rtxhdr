@@ -38,7 +38,11 @@ to its own CUDA session/device, so queued downstream frames can outlive filter
 removal or a resolution/context change. Registration occurs at allocation,
 not per frame. Mapping coordinates reuse with previously submitted D3D11 work.
 The short bridge stream is synchronized before releasing the CUDA input;
-native inference retains its existing upstream queue and CUDA graphs.
+native inference retains its existing upstream queue and CUDA graphs. The
+shared device's ID3D10Multithread lock covers the entire map/write/unmap/sync
+ownership interval, including registration and unregistration. Locking only
+individual D3D11 calls was insufficient in the first continuous playback test
+and caused a device hang; that earlier revision must not be shipped.
 
 The PTX is embedded. Ordinary mpv builds need ffnvcodec headers and D3D11,
 not a CUDA Toolkit. To regenerate the header after changing the CUDA source:
@@ -51,7 +55,28 @@ The initial generated header uses CUDA 12.8 / compute_75 PTX. It contains
 ordinary arithmetic and packing kernels; runtime compilation is done by the
 installed NVIDIA driver. Keep the CUDA source and generated header together.
 
-Ordering note: putting RTX HDR at the end of `vf` covers video filters, not
-the later GLSL hooks in the VO. Manually enabling HDR does not change that
-stage order. A separate future VO change is needed if HDR must also follow
-all GLSL processing, with proper subtitle/OSD and color-management handling.
+Ordering scope: the requirement here is native upscaling followed by RTX HDR
+at the tail of `vf`. GLSL hooks remain in their existing later VO stage.
+This project does not require moving HDR into the VO. Putting HDR at the end
+of `vf` does not itself imply a host transfer; a software-only filter inserted
+between the hardware filters can still cause an automatic download/upload.
+
+Local validation on RTX 4070 Ti / driver 617.42:
+
+- GPU packing tests cover BT.601/709/2020 NC, full/limited range, padded
+  strides, odd dimensions, guard words and opaque alpha. Tested values matched
+  the double-precision reference exactly after 10-bit quantization.
+- Continuous native inference, bridge and HDR playback and seeking passed
+  after the ownership lock fix; output was D3D11 RGB10, BT.2020/PQ, with no
+  filter disabling, device-loss errors or automatic host download in the log.
+- Controller tests cover AI/HDR toggles, Vulkan/D3D11 changes, file/size/codec
+  changes, an HDR10 input, and Manager's explicit/missing default slot.
+- Three alternating runs of 1080p24 High10 to 4K, standard Balanced, software
+  decode, 800x450 preview and untimed playback: GPU bridge 49.58/49.48/49.57
+  fps (median 49.57), copy-back RGB10 bridge 48.30/48.22/48.26 fps (median
+  48.26). Both use the same experimental executable and dependencies.
+
+These are synthetic local tests, not a claim of universal driver support or
+a frame-rate guarantee. The lack of host pixel-transfer calls in this bridge
+and playback logs has not yet been independently verified with a GPU timeline.
+The initial copy/software decode and CUDA upload remain as described above.

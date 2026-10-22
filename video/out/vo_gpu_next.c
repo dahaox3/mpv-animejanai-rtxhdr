@@ -7871,7 +7871,7 @@ static void prewarm_video_path(struct vo *vo, const struct mp_image_params *para
     int tw = MPMAX(mp_rect_w(p->dst), 64), th = MPMAX(mp_rect_h(p->dst), 64);
     pl_tex ttex = ok && tfmt && (tfmt->caps & PL_FMT_CAP_RENDERABLE)
         ? pl_tex_create(gpu, pl_tex_params(.format = tfmt, .w = tw, .h = th,
-                                           .renderable = true))
+                                           .renderable = true, .blit_dst = true))
         : NULL;
     if (ttex) {
         struct pl_frame target = {
