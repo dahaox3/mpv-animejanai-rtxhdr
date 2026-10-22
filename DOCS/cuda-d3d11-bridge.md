@@ -76,7 +76,16 @@ Local validation on RTX 4070 Ti / driver 617.42:
   fps (median 49.57), copy-back RGB10 bridge 48.30/48.22/48.26 fps (median
   48.26). Both use the same experimental executable and dependencies.
 
+Nsight Systems 2024.6.2 CUDA node tracing also compared approximately six
+seconds / 152 output frames through both bridges. Copy-back recorded
+7,564,492,864 bytes of device-to-host copies (456 picture-plane copies plus
+one 64-byte copy). The GPU bridge recorded only the same single 64-byte
+device-to-host copy, and 152 device-to-array copies of 33,177,600 bytes each.
+There was no full-frame CUDA device-to-host transfer in the GPU bridge trace.
+Initial host-to-CUDA uploads were identical: 960,047,328 bytes in 313 copies.
+This is not a claim that the whole player performs no host transfers.
+
 These are synthetic local tests, not a claim of universal driver support or
-a frame-rate guarantee. The lack of host pixel-transfer calls in this bridge
-and playback logs has not yet been independently verified with a GPU timeline.
-The initial copy/software decode and CUDA upload remain as described above.
+a frame-rate guarantee. The initial copy/software decode and CUDA upload
+remain as described above. Nsight CUDA tracing does not cover every possible
+driver-internal or D3D11 memory operation.
